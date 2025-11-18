@@ -15,7 +15,7 @@ import hashlib
 import jwt
 import base64
 import aiohttp
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from groq import Groq
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -308,15 +308,19 @@ Customer said: "{customer_message}"
 RESPOND in 2-4 sentences with HIGH RESPECT tone. Use hajur, garnuhuncha, hununcha, dinus."""
     
     try:
-        chat = LlmChat(
-            api_key=GROQ_API_KEY,
-            session_id=customer_id,
-            system_message=system_prompt
-        ).with_model("openai", "gpt-4o-mini")
+        client = Groq(api_key=GROQ_API_KEY)
         
-        user_message = UserMessage(text=customer_message)
-        response = await chat.send_message(user_message)
-        return response
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": customer_message}
+            ],
+            model="llama-3.1-70b-versatile",
+            temperature=0.7,
+            max_tokens=500
+        )
+        
+        return chat_completion.choices[0].message.content
     except Exception as e:
         logging.error(f"AI error: {e}")
         return "Sorry hajur, ma ali busy chhu. Pachhi message garnuhuncha!"
