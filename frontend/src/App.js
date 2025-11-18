@@ -8,7 +8,7 @@ import Orders from './pages/Orders';
 import { Toaster } from './components/ui/sonner';
 import '@/App.css';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/$/, '');
 const API = `${BACKEND_URL}/api`;
 
 export { API };
