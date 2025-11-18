@@ -40,8 +40,9 @@ GROQ_API_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 IMGBB_API_KEY = os.environ.get('IMGBB_API_KEY', '')
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'admin123')
 JWT_SECRET = os.environ.get('JWT_SECRET', 'your-secret-key-change-in-production')
-BUSINESS_NAME = os.environ.get('BUSINESS_NAME', 'Nepal Fashion Store')
-AGENT_NAME = os.environ.get('AGENT_NAME', 'Maya')
+BUSINESS_NAME = os.environ.get('BUSINESS_NAME', 'Urban Fashion')
+AGENT_NAME = os.environ.get('AGENT_NAME', 'Aashis')
+BUSINESS_LOCATION = os.environ.get('BUSINESS_LOCATION', 'Gausala area')
 
 # Models
 class Product(BaseModel):
@@ -49,6 +50,7 @@ class Product(BaseModel):
     product_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     price: float
+    regular_price: Optional[float] = None  # For showing discount (e.g., Rs. 1499)
     description: Optional[str] = ""
     colors: List[str] = []
     sizes: List[str] = []
@@ -57,9 +59,18 @@ class Product(BaseModel):
     active: bool = True
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
+class PaymentQR(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    qr_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    payment_method: str  # "esewa", "khalti", "bank"
+    qr_image_url: str
+    account_name: Optional[str] = ""
+    active: bool = True
+
 class ProductCreate(BaseModel):
     name: str
     price: float
+    regular_price: Optional[float] = None
     description: Optional[str] = ""
     colors: List[str] = []
     sizes: List[str] = []
@@ -85,8 +96,8 @@ class Conversation(BaseModel):
 class OrderItem(BaseModel):
     product_id: str
     product_name: str
-    color: Optional[str] = ""
-    size: Optional[str] = ""
+    color: str
+    size: str
     quantity: int = 1
     price: float
 
@@ -95,13 +106,20 @@ class Order(BaseModel):
     order_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     customer_id: str
     customer_name: str
-    phone: str
-    address: str
+    phone_primary: str
+    phone_alternative: Optional[str] = ""
+    district: str
+    municipality: str
+    ward_number: str
+    tole_area: str
     items: List[OrderItem]
+    subtotal: float
+    delivery_charge: float
     total_amount: float
     payment_method: str  # 'COD' or 'Online'
     payment_screenshot: Optional[str] = ""
     status: str = "pending"  # pending, confirmed, shipped, delivered, cancelled
+    has_media_pending: bool = False  # True when customer sends media
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 class Customer(BaseModel):
@@ -204,8 +222,11 @@ async def upload_to_imgbb(image_data: bytes) -> str:
     return "https://via.placeholder.com/400"
 
 async def get_ai_response(customer_id: str, customer_message: str, conversation: Conversation, products: List[Product]) -> str:
+    import random
+    customer_number = random.randint(90, 98)
+    
     products_info = "\n".join([
-        f"{p.name} - Rs.{p.price}, Colors: {', '.join(p.colors) if p.colors else 'N/A'}, Stock: {p.stock}"
+        f"{p.name} - Offer: Rs.{p.price}, Regular: Rs.{p.regular_price or p.price}, Colors: {', '.join(p.colors)}, Sizes: {', '.join(p.sizes)}, Stock: {p.stock}"
         for p in products if p.active
     ])
     
@@ -214,27 +235,67 @@ async def get_ai_response(customer_id: str, customer_message: str, conversation:
         for msg in conversation.messages[-10:]
     ])
     
-    system_prompt = f"""You are {AGENT_NAME}, a sales agent for {BUSINESS_NAME} in Nepal.
+    system_prompt = f"""You are {AGENT_NAME}, a respectful sales agent for {BUSINESS_NAME} in Nepal.
 
-LANGUAGE: Romanized Nepali + English mix (NO Devanagari)
-Examples: "Namaste! Kasto chha?", "Yo design ta viral bhaisakyo!", "Rs. {products[0].price if products else 1500} ma ekdum worth it chha!"
+CRITICAL LANGUAGE RULES - ALWAYS USE HIGH RESPECT:
+- NEVER use "timi", "timro" - ALWAYS use "hajur", "tapai"
+- NEVER use "jannu chha" - ALWAYS use "jannu huncha" or "janna chahanu huncha"
+- NEVER use "garnu chha" - ALWAYS use "garnuhuncha"
+- NEVER use "xa" - ALWAYS use "chha"
+- Examples: "Hajur kasto hununcha?", "Hajur lai k chaahiyo?", "Garnuhuncha?"
 
-PERSONALITY: Friendly, warm, professional salesperson
+BUSINESS CONTEXT:
+- You are manufacturer, factory at {BUSINESS_LOCATION}
+- Rarely sell online, this is special offer
+- Customer is #{customer_number} (between 90-98)
+- First 100 customers get offer price
+- After 100, regular price applies
 
-SALES PSYCHOLOGY:
-- Rapport: "Tapai kaha bata ho?"
-- Social Proof: "5 jana le aaja order garyo!"
-- Scarcity: "Only 3 left!"
-- Urgency: "Aaja order = bholi delivery!"
-- Empathy: "Ma bujhchu budget important chha"
-- Value: Explain quality, durability
+PRICING STRATEGY (CRITICAL):
+- Show: "Regular Rs. 1499, Offer Rs. 999"
+- When calculating: Rs. 999 = Rs. 1000 (manipulative trick)
+- Multiple items: Calculate at Rs. 1000 each (Rs. 999 shown)
+- ONLY give Rs. 900 discount if customer ASKS for discount on multiple items
+- If customer asks "2 ota ma discount xa?", then offer Rs. 900 each
+- If customer doesn't ask, keep Rs. 1000 per item
+- NEVER give discount below Rs. 900 per item
+- NEVER give discount below Rs. 800 total
 
-CONVERSATION STAGE: {conversation.stage}
-- greeting: Welcome warmly
-- browsing: Understand needs, recommend products
-- negotiation: Handle objections, justify price
-- ordering: Collect name, phone, address
-- completed: Thank customer
+DELIVERY CHARGES:
+- Kathmandu Valley: Rs. 100 (NON-NEGOTIABLE)
+- Outside Valley: Rs. 200 (can reduce to Rs. 150 if customer insists)
+- Delivery time: KTM same day/tomorrow, Outside 2-3 days
+
+DELIVERY NEGOTIATION (2 attempts):
+1st attempt: "Delivery ekdum fast ra safe chha, Rs. 200 worth it chha"
+2nd attempt: If customer still insists, give Rs. 150
+
+RETURN POLICY:
+- NEVER mention unless customer asks
+- If asked: "Sorry hajur, return policy chhaina"
+
+ORDER COLLECTION (EXACT FORMAT):
+When customer confirms order, collect:
+1. Full Name
+2. Primary Phone (10 digits)
+3. Alternative Phone (ask reason if not provided, accept if valid reason)
+4. Full Address in ONE message:
+   - District:
+   - Municipality/VDC:
+   - Ward Number:
+   - Tole/Area:
+
+VALIDATION:
+- Phone must be 10 digits
+- Address must have all 4 parts
+- If incomplete, ask again politely
+
+OTHER PRODUCTS:
+If customer asks about other items: "Hamro manufacturer ho, online ma aile yo matra available chha. Direct factory {BUSINESS_LOCATION} ma aayera hernu huncha!"
+
+CANCELLATION:
+If customer cancels, convince ONCE: "Yo opportunity miss hunu bhayo bhane regular Rs. 1499 ma kinna parchha. Only X slots left!"
+If still cancels: "Thik chha hajur, pachhi chaahiyo bhane message garnuhuncha"
 
 AVAILABLE PRODUCTS:
 {products_info}
@@ -242,9 +303,9 @@ AVAILABLE PRODUCTS:
 CONVERSATION HISTORY:
 {conversation_history}
 
-Customer just said: "{customer_message}"
+Customer said: "{customer_message}"
 
-Respond in 2-4 sentences in Nepali-English mix. If mentioning products, I'll auto-send images. Keep natural, friendly, guide toward sale."""
+RESPOND in 2-4 sentences with HIGH RESPECT tone. Use hajur, garnuhuncha, hununcha, dinus."""
     
     try:
         chat = LlmChat(
@@ -258,7 +319,7 @@ Respond in 2-4 sentences in Nepali-English mix. If mentioning products, I'll aut
         return response
     except Exception as e:
         logging.error(f"AI error: {e}")
-        return "Sorry, ma ali busy chhu. Pachhi message garnus!"
+        return "Sorry hajur, ma ali busy chhu. Pachhi message garnuhuncha!"
 
 def detect_stage(messages: List[Message]) -> str:
     if len(messages) <= 2:
@@ -316,13 +377,56 @@ async def handle_webhook(request: Request, x_hub_signature_256: Optional[str] = 
             for messaging_event in entry.get('messaging', []):
                 if messaging_event.get('message'):
                     sender_id = messaging_event['sender']['id']
-                    message_text = messaging_event['message'].get('text', '')
+                    message = messaging_event['message']
+                    message_text = message.get('text', '')
+                    
+                    # Check for media (images, videos, voice, files)
+                    has_media = any([
+                        message.get('attachments'),
+                        message.get('sticker_id')
+                    ])
+                    
+                    if has_media:
+                        # Customer sent media - create notification for admin
+                        media_type = "unknown"
+                        media_url = ""
+                        
+                        if message.get('attachments'):
+                            attachment = message['attachments'][0]
+                            media_type = attachment.get('type', 'file')
+                            media_url = attachment.get('payload', {}).get('url', '')
+                        
+                        # Create media notification in database
+                        media_notification = {
+                            "notification_id": str(uuid.uuid4()),
+                            "customer_id": sender_id,
+                            "media_type": media_type,
+                            "media_url": media_url,
+                            "status": "pending",  # pending, reviewed
+                            "admin_response": "",
+                            "created_at": datetime.now(timezone.utc).isoformat()
+                        }
+                        await db.media_notifications.insert_one(media_notification)
+                        
+                        # Mark conversation as having pending media
+                        await db.conversations.update_one(
+                            {"customer_id": sender_id},
+                            {"$set": {"has_media_pending": True}}
+                        )
+                        
+                        # Bot stays silent - no response
+                        continue
                     
                     if not message_text:
                         continue
                     
-                    # Get or create conversation
+                    # Check if there's pending media review
                     conversation_doc = await db.conversations.find_one({"customer_id": sender_id})
+                    if conversation_doc and conversation_doc.get('has_media_pending'):
+                        # Don't respond until admin reviews media
+                        continue
+                    
+                    # Get or create conversation
                     if not conversation_doc:
                         conversation = Conversation(
                             conversation_id=str(uuid.uuid4()),
@@ -458,6 +562,9 @@ async def get_analytics(current_user: dict = Depends(get_current_user)):
     week_orders = [o for o in all_orders if o['created_at'] >= week_start]
     month_orders = [o for o in all_orders if o['created_at'] >= month_start]
     
+    # Get pending media notifications
+    pending_media = await db.media_notifications.count_documents({"status": "pending"})
+    
     return {
         "today": {
             "orders": len(today_orders),
@@ -471,8 +578,64 @@ async def get_analytics(current_user: dict = Depends(get_current_user)):
             "orders": len(month_orders),
             "revenue": sum(o.get('total_amount', 0) for o in month_orders)
         },
-        "recent_orders": all_orders[:10]
+        "recent_orders": all_orders[:10],
+        "pending_media": pending_media
     }
+
+# Media Notifications
+@api_router.get("/admin/media-notifications")
+async def get_media_notifications(current_user: dict = Depends(get_current_user)):
+    notifications = await db.media_notifications.find({"status": "pending"}).sort("created_at", -1).to_list(100)
+    return notifications
+
+@api_router.post("/admin/media-notifications/{notification_id}/respond")
+async def respond_to_media(notification_id: str, response_text: str, current_user: dict = Depends(get_current_user)):
+    notification = await db.media_notifications.find_one({"notification_id": notification_id})
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    
+    # Send admin's response to customer
+    await send_facebook_message(notification['customer_id'], response_text)
+    
+    # Mark as reviewed and clear pending flag
+    await db.media_notifications.update_one(
+        {"notification_id": notification_id},
+        {"$set": {"status": "reviewed", "admin_response": response_text}}
+    )
+    
+    await db.conversations.update_one(
+        {"customer_id": notification['customer_id']},
+        {"$set": {"has_media_pending": False}}
+    )
+    
+    return {"success": True}
+
+# Payment QR Management
+@api_router.get("/admin/payment-qr")
+async def get_payment_qr(current_user: dict = Depends(get_current_user)):
+    qr_codes = await db.payment_qr.find({}).to_list(100)
+    return qr_codes
+
+@api_router.post("/admin/payment-qr")
+async def create_payment_qr(file: UploadFile = File(...), payment_method: str = "esewa", account_name: str = "", current_user: dict = Depends(get_current_user)):
+    contents = await file.read()
+    qr_url = await upload_to_imgbb(contents)
+    
+    qr = PaymentQR(
+        payment_method=payment_method,
+        qr_image_url=qr_url,
+        account_name=account_name,
+        active=True
+    )
+    await db.payment_qr.insert_one(qr.model_dump())
+    return qr
+
+@api_router.delete("/admin/payment-qr/{qr_id}")
+async def delete_payment_qr(qr_id: str, current_user: dict = Depends(get_current_user)):
+    result = await db.payment_qr.delete_one({"qr_id": qr_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="QR code not found")
+    return {"success": True}
 
 # Include router
 app.include_router(api_router)
@@ -494,3 +657,8 @@ logger = logging.getLogger(__name__)
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8001))
+    uvicorn.run(app, host="0.0.0.0", port=port)

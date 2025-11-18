@@ -33,7 +33,7 @@ const Login = ({ onLogin }) => {
             <Lock className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent mb-2">
-            Nepal Fashion Store
+            Urban Fashion
           </h1>
           <p className="text-gray-600">Admin Panel Login</p>
         </div>

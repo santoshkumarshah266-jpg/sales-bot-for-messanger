@@ -3,7 +3,9 @@ services:
     name: sales-bot-backend
     env: python
     buildCommand: "pip install -r backend/requirements.txt"
-    startCommand: "python backend/server.py"
+    startCommand: "cd backend && python server.py"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: PORT
+        value: 8001

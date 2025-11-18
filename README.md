@@ -1,6 +1,6 @@
-# Nepal Fashion Store - AI Sales Agent for Facebook Messenger
+# Urban Fashion - AI Sales Agent for Facebook Messenger
 
-A complete AI-powered Facebook Messenger sales agent for Nepal-based clothing businesses. Built with FastAPI, React, MongoDB, and Groq AI.
+A complete AI-powered Facebook Messenger sales agent for clothing businesses in Nepal. Built with FastAPI, React, MongoDB, and Emergent LLM.
 
 ## Features
 
@@ -94,8 +94,9 @@ ADMIN_PASSWORD=admin123           # Change in production
 JWT_SECRET=nepali-fashion-secret-2025
 
 # Business Configuration
-BUSINESS_NAME=Nepal Fashion Store
-AGENT_NAME=Maya
+BUSINESS_NAME=Urban Fashion
+AGENT_NAME=Aashis
+BUSINESS_LOCATION=Gausala area
 ```
 
 ### 3. Get Required API Keys
@@ -382,4 +383,4 @@ Built with:
 
 ---
 
-**Made with ❤️ for Nepal's Fashion Businesses**
+**Made with ❤️ for Urban fashion Fashion Businesses**
