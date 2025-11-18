@@ -1,0 +1,46 @@
+services:
+  # Backend Service
+  - type: web
+    name: urban-fashion-backend
+    runtime: python
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: MONGO_URL
+        sync: false
+      - key: DB_NAME
+        value: urban_fashion_db
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: FACEBOOK_PAGE_ACCESS_TOKEN
+        sync: false
+      - key: FACEBOOK_VERIFY_TOKEN
+        value: nepali_clothing_2025
+      - key: FACEBOOK_APP_SECRET
+        sync: false
+      - key: EMERGENT_LLM_KEY
+        value: sk-emergent-6Bb7766873eC7EfE12
+      - key: IMGBB_API_KEY
+        value: ""
+      - key: ADMIN_PASSWORD
+        value: admin123
+      - key: JWT_SECRET
+        value: nepali-fashion-secret-2025
+      - key: BUSINESS_NAME
+        value: Urban Fashion
+      - key: AGENT_NAME
+        value: Aashis
+      - key: BUSINESS_LOCATION
+        value: Gausala area
+      - key: PORT
+        value: 8001
+
+  # Frontend Service
+  - type: web
+    name: urban-fashion-frontend
+    runtime: node
+    buildCommand: cd frontend && yarn install && yarn build
+    staticPublishPath: frontend/build
+    envVars:
+      - key: REACT_APP_BACKEND_URL
+        sync: false
