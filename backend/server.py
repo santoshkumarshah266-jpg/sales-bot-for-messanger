@@ -29,6 +29,11 @@ db = client[os.environ['DB_NAME']]
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
+# Add root route
+@app.get("/")
+async def app_root():
+    return {"message": "Urban Fashion Backend", "status": "running", "api": "/api/"}
+
 # Security
 security = HTTPBearer()
 
