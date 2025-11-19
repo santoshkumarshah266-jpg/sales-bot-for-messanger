@@ -14,7 +14,7 @@ import hashlib
 import jwt
 import base64
 import aiohttp
-from groq import Groq
+import httpx
 import database as db
 
 ROOT_DIR = Path(__file__).parent
