@@ -642,8 +642,7 @@ async def delete_payment_qr(qr_id: str, current_user: dict = Depends(get_current
     return {"success": True}
 
 # Include router
-app.include_router(api_router)
-
+# Add CORS middleware BEFORE including router
 cors_origins = os.environ.get('CORS_ORIGINS', '*')
 if cors_origins == '*':
     allow_origins = ['*']
@@ -659,6 +658,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include router AFTER middleware
+app.include_router(api_router)
 
 logging.basicConfig(
     level=logging.INFO,
