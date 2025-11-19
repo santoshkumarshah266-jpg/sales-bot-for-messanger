@@ -22,11 +22,17 @@ load_dotenv(ROOT_DIR / '.env')
 
 # MongoDB connection with SSL configuration
 mongo_url = os.environ['MONGO_URL']
+
+# Don't connect at startup - let it connect lazily
+import ssl
 client = AsyncIOMotorClient(
     mongo_url,
+    tls=True,
     tlsAllowInvalidCertificates=True,
-    serverSelectionTimeoutMS=5000,
-    connectTimeoutMS=10000
+    tlsInsecure=True,
+    serverSelectionTimeoutMS=30000,
+    connectTimeoutMS=30000,
+    socketTimeoutMS=30000
 )
 db = client[os.environ['DB_NAME']]
 
