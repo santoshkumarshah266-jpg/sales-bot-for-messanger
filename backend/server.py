@@ -2,7 +2,6 @@ from fastapi import FastAPI, APIRouter, HTTPException, Request, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
@@ -16,25 +15,10 @@ import jwt
 import base64
 import aiohttp
 from groq import Groq
+import database as db
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
-
-# MongoDB connection with SSL configuration
-mongo_url = os.environ['MONGO_URL']
-
-# Don't connect at startup - let it connect lazily
-import ssl
-client = AsyncIOMotorClient(
-    mongo_url,
-    tls=True,
-    tlsAllowInvalidCertificates=True,
-    tlsInsecure=True,
-    serverSelectionTimeoutMS=30000,
-    connectTimeoutMS=30000,
-    socketTimeoutMS=30000
-)
-db = client[os.environ['DB_NAME']]
 
 # Create the main app
 app = FastAPI()
@@ -426,13 +410,11 @@ async def handle_webhook(request: Request, x_hub_signature_256: Optional[str] = 
                             "admin_response": "",
                             "created_at": datetime.now(timezone.utc).isoformat()
                         }
-                        await db.media_notifications.insert_one(media_notification)
+                        await db.insert_one("media_notifications", media_notification)
                         
                         # Mark conversation as having pending media
-                        await db.conversations.update_one(
-                            {"customer_id": sender_id},
-                            {"$set": {"has_media_pending": True}}
-                        )
+                        await db.update_one("conversations", {"customer_id": sender_id}, 
+                                          {"has_media_pending": 1})
                         
                         # Bot stays silent - no response
                         continue
@@ -441,7 +423,7 @@ async def handle_webhook(request: Request, x_hub_signature_256: Optional[str] = 
                         continue
                     
                     # Check if there's pending media review
-                    conversation_doc = await db.conversations.find_one({"customer_id": sender_id})
+                    conversation_doc = await db.find_one("conversations", {"customer_id": sender_id})
                     if conversation_doc and conversation_doc.get('has_media_pending'):
                         # Don't respond until admin reviews media
                         continue
@@ -455,13 +437,24 @@ async def handle_webhook(request: Request, x_hub_signature_256: Optional[str] = 
                             stage="greeting",
                             context={}
                         )
-                        await db.conversations.insert_one(conversation.model_dump())
+                        conv_data = conversation.model_dump()
+                        conv_data["messages"] = db.serialize_list(conv_data["messages"])
+                        conv_data["context"] = db.serialize_dict(conv_data["context"])
+                        await db.insert_one("conversations", conv_data)
                     else:
+                        conversation_doc["messages"] = db.deserialize_list(conversation_doc.get("messages", "[]"))
+                        conversation_doc["context"] = db.deserialize_dict(conversation_doc.get("context", "{}"))
                         conversation = Conversation(**conversation_doc)
                     
                     # Get products
-                    products_docs = await db.products.find({"active": True}).to_list(100)
-                    products = [Product(**p) for p in products_docs]
+                    products_docs = await db.find_many("products", {"active": 1}, limit=100)
+                    products = []
+                    for p in products_docs:
+                        p["colors"] = db.deserialize_list(p.get("colors", "[]"))
+                        p["sizes"] = db.deserialize_list(p.get("sizes", "[]"))
+                        p["images"] = db.deserialize_list(p.get("images", "[]"))
+                        p["active"] = bool(p.get("active", 1))
+                        products.append(Product(**p))
                     
                     # Add customer message
                     customer_msg = Message(sender="customer", text=message_text)
@@ -491,10 +484,10 @@ async def handle_webhook(request: Request, x_hub_signature_256: Optional[str] = 
                     conversation.last_updated = datetime.now(timezone.utc).isoformat()
                     
                     # Save conversation
-                    await db.conversations.update_one(
-                        {"customer_id": sender_id},
-                        {"$set": conversation.model_dump()}
-                    )
+                    conv_data = conversation.model_dump()
+                    conv_data["messages"] = db.serialize_list(conv_data["messages"])
+                    conv_data["context"] = db.serialize_dict(conv_data["context"])
+                    await db.update_one("conversations", {"customer_id": sender_id}, conv_data)
                     
     return {"status": "ok"}
 
@@ -509,32 +502,46 @@ async def login(request: LoginRequest):
 # Products
 @api_router.get("/admin/products", response_model=List[Product])
 async def get_products(current_user: dict = Depends(get_current_user)):
-    products_docs = await db.products.find({}).to_list(1000)
-    return [Product(**p) for p in products_docs]
+    products_docs = await db.find_many("products")
+    products = []
+    for p in products_docs:
+        p["colors"] = db.deserialize_list(p.get("colors", "[]"))
+        p["sizes"] = db.deserialize_list(p.get("sizes", "[]"))
+        p["images"] = db.deserialize_list(p.get("images", "[]"))
+        p["active"] = bool(p.get("active", 1))
+        products.append(Product(**p))
+    return products
 
 @api_router.post("/admin/products", response_model=Product)
 async def create_product(product: ProductCreate, current_user: dict = Depends(get_current_user)):
     new_product = Product(**product.model_dump())
-    await db.products.insert_one(new_product.model_dump())
+    product_data = new_product.model_dump()
+    product_data["colors"] = db.serialize_list(product_data["colors"])
+    product_data["sizes"] = db.serialize_list(product_data["sizes"])
+    product_data["images"] = db.serialize_list(product_data["images"])
+    product_data["active"] = 1 if product_data["active"] else 0
+    await db.insert_one("products", product_data)
     return new_product
 
 @api_router.put("/admin/products/{product_id}", response_model=Product)
 async def update_product(product_id: str, product: ProductCreate, current_user: dict = Depends(get_current_user)):
-    existing = await db.products.find_one({"product_id": product_id})
+    existing = await db.find_one("products", {"product_id": product_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
     
     updated_product = Product(**{**product.model_dump(), "product_id": product_id, "created_at": existing['created_at']})
-    await db.products.update_one(
-        {"product_id": product_id},
-        {"$set": updated_product.model_dump()}
-    )
+    product_data = updated_product.model_dump()
+    product_data["colors"] = db.serialize_list(product_data["colors"])
+    product_data["sizes"] = db.serialize_list(product_data["sizes"])
+    product_data["images"] = db.serialize_list(product_data["images"])
+    product_data["active"] = 1 if product_data["active"] else 0
+    await db.update_one("products", {"product_id": product_id}, product_data)
     return updated_product
 
 @api_router.delete("/admin/products/{product_id}")
 async def delete_product(product_id: str, current_user: dict = Depends(get_current_user)):
-    result = await db.products.delete_one({"product_id": product_id})
-    if result.deleted_count == 0:
+    deleted_count = await db.delete_one("products", {"product_id": product_id})
+    if deleted_count == 0:
         raise HTTPException(status_code=404, detail="Product not found")
     return {"success": True}
 
@@ -547,24 +554,27 @@ async def upload_image(file: UploadFile = File(...), current_user: dict = Depend
 # Orders
 @api_router.get("/admin/orders")
 async def get_orders(current_user: dict = Depends(get_current_user)):
-    orders_docs = await db.orders.find({}).sort("created_at", -1).to_list(1000)
-    return orders_docs
+    orders_docs = await db.find_many("orders", limit=1000)
+    for order in orders_docs:
+        if order.get("items"):
+            order["items"] = db.deserialize_list(order["items"])
+    return sorted(orders_docs, key=lambda x: x.get("created_at", ""), reverse=True)
 
 @api_router.get("/admin/orders/{order_id}")
 async def get_order(order_id: str, current_user: dict = Depends(get_current_user)):
-    order = await db.orders.find_one({"order_id": order_id})
+    order = await db.find_one("orders", {"order_id": order_id})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+    if order.get("items"):
+        order["items"] = db.deserialize_list(order["items"])
     return order
 
 @api_router.put("/admin/orders/{order_id}/status")
 async def update_order_status(order_id: str, request: UpdateStatusRequest, current_user: dict = Depends(get_current_user)):
-    result = await db.orders.update_one(
-        {"order_id": order_id},
-        {"$set": {"status": request.status}}
-    )
-    if result.modified_count == 0:
+    existing = await db.find_one("orders", {"order_id": order_id})
+    if not existing:
         raise HTTPException(status_code=404, detail="Order not found")
+    await db.update_one("orders", {"order_id": order_id}, {"status": request.status})
     return {"success": True}
 
 # Analytics
@@ -576,14 +586,14 @@ async def get_analytics(current_user: dict = Depends(get_current_user)):
     month_start = (now - timedelta(days=30)).isoformat()
     
     # Get orders
-    all_orders = await db.orders.find({}).to_list(1000)
+    all_orders = await db.find_many("orders", limit=1000)
     
-    today_orders = [o for o in all_orders if o['created_at'] >= today_start]
-    week_orders = [o for o in all_orders if o['created_at'] >= week_start]
-    month_orders = [o for o in all_orders if o['created_at'] >= month_start]
+    today_orders = [o for o in all_orders if o.get('created_at', '') >= today_start]
+    week_orders = [o for o in all_orders if o.get('created_at', '') >= week_start]
+    month_orders = [o for o in all_orders if o.get('created_at', '') >= month_start]
     
     # Get pending media notifications
-    pending_media = await db.media_notifications.count_documents({"status": "pending"})
+    pending_media = await db.count_documents("media_notifications", {"status": "pending"})
     
     return {
         "today": {
@@ -605,12 +615,12 @@ async def get_analytics(current_user: dict = Depends(get_current_user)):
 # Media Notifications
 @api_router.get("/admin/media-notifications")
 async def get_media_notifications(current_user: dict = Depends(get_current_user)):
-    notifications = await db.media_notifications.find({"status": "pending"}).sort("created_at", -1).to_list(100)
-    return notifications
+    notifications = await db.find_many("media_notifications", {"status": "pending"}, limit=100)
+    return sorted(notifications, key=lambda x: x.get("created_at", ""), reverse=True)
 
 @api_router.post("/admin/media-notifications/{notification_id}/respond")
 async def respond_to_media(notification_id: str, response_text: str, current_user: dict = Depends(get_current_user)):
-    notification = await db.media_notifications.find_one({"notification_id": notification_id})
+    notification = await db.find_one("media_notifications", {"notification_id": notification_id})
     if not notification:
         raise HTTPException(status_code=404, detail="Notification not found")
     
@@ -618,22 +628,20 @@ async def respond_to_media(notification_id: str, response_text: str, current_use
     await send_facebook_message(notification['customer_id'], response_text)
     
     # Mark as reviewed and clear pending flag
-    await db.media_notifications.update_one(
-        {"notification_id": notification_id},
-        {"$set": {"status": "reviewed", "admin_response": response_text}}
-    )
+    await db.update_one("media_notifications", {"notification_id": notification_id}, 
+                       {"status": "reviewed", "admin_response": response_text})
     
-    await db.conversations.update_one(
-        {"customer_id": notification['customer_id']},
-        {"$set": {"has_media_pending": False}}
-    )
+    await db.update_one("conversations", {"customer_id": notification['customer_id']}, 
+                       {"has_media_pending": 0})
     
     return {"success": True}
 
 # Payment QR Management
 @api_router.get("/admin/payment-qr")
 async def get_payment_qr(current_user: dict = Depends(get_current_user)):
-    qr_codes = await db.payment_qr.find({}).to_list(100)
+    qr_codes = await db.find_many("payment_qr", limit=100)
+    for qr in qr_codes:
+        qr["active"] = bool(qr.get("active", 1))
     return qr_codes
 
 @api_router.post("/admin/payment-qr")
@@ -647,13 +655,15 @@ async def create_payment_qr(file: UploadFile = File(...), payment_method: str = 
         account_name=account_name,
         active=True
     )
-    await db.payment_qr.insert_one(qr.model_dump())
+    qr_data = qr.model_dump()
+    qr_data["active"] = 1 if qr_data["active"] else 0
+    await db.insert_one("payment_qr", qr_data)
     return qr
 
 @api_router.delete("/admin/payment-qr/{qr_id}")
 async def delete_payment_qr(qr_id: str, current_user: dict = Depends(get_current_user)):
-    result = await db.payment_qr.delete_one({"qr_id": qr_id})
-    if result.deleted_count == 0:
+    deleted_count = await db.delete_one("payment_qr", {"qr_id": qr_id})
+    if deleted_count == 0:
         raise HTTPException(status_code=404, detail="QR code not found")
     return {"success": True}
 
@@ -677,9 +687,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
+@app.on_event("startup")
+async def startup_event():
+    await db.init_db()
+    logging.info("SQLite database initialized")
 
 if __name__ == "__main__":
     import uvicorn
