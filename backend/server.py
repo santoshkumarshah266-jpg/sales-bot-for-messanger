@@ -643,20 +643,13 @@ async def delete_payment_qr(qr_id: str, current_user: dict = Depends(get_current
 
 # Include router
 # Add CORS middleware BEFORE including router
-cors_origins = os.environ.get('CORS_ORIGINS', '*')
-if cors_origins == '*':
-    allow_origins = ['*']
-    allow_credentials = False
-else:
-    allow_origins = cors_origins.split(',')
-    allow_credentials = True
-
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=allow_credentials,
-    allow_origins=allow_origins,
-    allow_methods=["*"],
+    allow_origins=["*"],  # Allow all origins for now
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Include router AFTER middleware
