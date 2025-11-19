@@ -309,8 +309,6 @@ RESPOND in 2-4 sentences with HIGH RESPECT tone. Use hajur, garnuhuncha, hununch
     
     try:
         # Use direct API call instead of Groq client to avoid proxy issues
-        import httpx
-        
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
             "Content-Type": "application/json"
@@ -333,7 +331,12 @@ RESPOND in 2-4 sentences with HIGH RESPECT tone. Use hajur, garnuhuncha, hununch
                 json=data,
                 timeout=30.0
             )
-            response.raise_for_status()
+            
+            if response.status_code != 200:
+                error_detail = response.text
+                logging.error(f"Groq API error {response.status_code}: {error_detail}")
+                return "Sorry hajur, ma ali busy chhu. Pachhi message garnuhuncha!"
+            
             result = response.json()
             return result["choices"][0]["message"]["content"]
             
