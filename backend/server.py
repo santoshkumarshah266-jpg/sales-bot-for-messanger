@@ -308,19 +308,35 @@ Customer said: "{customer_message}"
 RESPOND in 2-4 sentences with HIGH RESPECT tone. Use hajur, garnuhuncha, hununcha, dinus."""
     
     try:
-        client = Groq(api_key=GROQ_API_KEY)
+        # Use direct API call instead of Groq client to avoid proxy issues
+        import httpx
         
-        chat_completion = client.chat.completions.create(
-            messages=[
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        data = {
+            "model": "llama-3.1-70b-versatile",
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": customer_message}
             ],
-            model="llama-3.1-70b-versatile",
-            temperature=0.7,
-            max_tokens=500
-        )
+            "temperature": 0.7,
+            "max_tokens": 500
+        }
         
-        return chat_completion.choices[0].message.content
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=30.0
+            )
+            response.raise_for_status()
+            result = response.json()
+            return result["choices"][0]["message"]["content"]
+            
     except Exception as e:
         logging.error(f"AI error: {e}")
         return "Sorry hajur, ma ali busy chhu. Pachhi message garnuhuncha!"
